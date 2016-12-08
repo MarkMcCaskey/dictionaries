@@ -14,7 +14,6 @@
 module NLP.Dictionary.StarDict.InMemory (
     StarDict (..)
   , mkDictionary
-  , extractEntries
   ) where
 
 import Control.Monad.IO.Class (MonadIO, liftIO)
