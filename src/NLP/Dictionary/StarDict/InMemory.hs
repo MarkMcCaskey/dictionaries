@@ -21,13 +21,14 @@ import Control.Monad.Catch (MonadThrow)
 import Data.Binary.Get (Get, getWord32be)
 import Data.ByteString.Lazy (ByteString)
 import Data.Maybe (maybeToList)
-import Data.Text.Lazy (Text)
+import Data.Text.Lazy (Text, pack)
 import Data.Text.Lazy.Encoding (decodeUtf8)
 import NLP.Dictionary (Dictionary(..))
 import NLP.Dictionary.StarDict (IfoFile(..), IfoFilePath, readIfoFile, indexNumberParser)
 import NLP.Dictionary.StarDict (Index, readIndexFile, checkDataFile, DataEntry(..), Renderer)
 import NLP.Dictionary.StarDict (mkDataParser)
 import qualified Data.ByteString.Lazy as BS
+import qualified Data.ByteString as BSS
 import qualified Data.Map.Strict as Map
 
 -- | Representation of dictionary.
@@ -58,3 +59,4 @@ instance Dictionary StarDict where
     extractEntry (offset, size) = decodeUtf8
                                 . BS.take (fromIntegral size)
                                 . BS.drop (fromIntegral offset) $ sdData
+

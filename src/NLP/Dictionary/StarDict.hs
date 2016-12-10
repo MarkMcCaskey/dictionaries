@@ -115,76 +115,84 @@ data IfoFile = IfoFile {
 ifoDateFormat :: String
 ifoDateFormat = "%0Y.%m.%d"
 
+
 -- | Read .ifo file at the given path.
 readIfoFile :: (MonadThrow m, MonadIO m) => FilePath -> m IfoFile
-readIfoFile ifoPath = (liftIO . BS.readFile $ ifoPath) >>= parseContents where
-  parseContents contents = case (parse ifoFile contents) of
+readIfoFile ifoPath = (liftIO . BS.readFile $ ifoPath) >>= (readIfoBS ifoPath)
+
+-- | Read .ifo file from bytestring 
+readIfoBS
+  :: (MonadThrow m, MonadIO m)
+  => FilePath   -- ^ File that the IFO data was read from (for error reporting)
+  -> ByteString -- ^ Content of IFO file
+  -> m IfoFile
+readIfoBS ifoPath ifoBS = case (parse ifoFile ifoBS) of
     (Fail _ _ msg) -> throwM $ WrongIfoFormat ifoPath msg
     (Done _ r)     -> return r
-
-  expect :: (Eq a, Show a) => String -> a -> [a] -> Parser ()
-  expect name x xs = unless (x `elem` xs) . fail . concat $ [
+  where
+    expect :: (Eq a, Show a) => String -> a -> [a] -> Parser ()
+    expect name x xs = unless (x `elem` xs) . fail . concat $ [
       name, " must be ", fmts xs, " (", show x, " provided)"
-    ] where
+      ] where
       fmt y = '\'':(show y) ++ "'"
-
+  
       fmts = \case
         []     -> ""
         (y:[]) -> fmt y
         ys     -> (intercalate ", " . map fmt . init $ ys) ++ " or " ++ (fmt . last $ ys)
 
-  justExpect :: (Eq a, Show a) => String -> Maybe a -> [a] -> Parser ()
-  justExpect name mx xs = maybe (return ()) (\x -> expect name x xs) mx
+    justExpect :: (Eq a, Show a) => String -> Maybe a -> [a] -> Parser ()
+    justExpect name mx xs = maybe (return ()) (\x -> expect name x xs) mx
 
-  ifoFile :: Parser IfoFile
-  ifoFile = do
-    ifoMagicData <- magicData
-    expect "magic data" ifoMagicData ["StarDict's dict ifo file"]
+    ifoFile :: Parser IfoFile
+    ifoFile = do
+      ifoMagicData <- magicData
+      expect "magic data" ifoMagicData ["StarDict's dict ifo file"]
 
-    (_, ifoVersion) <- (id *** BSC8.unpack) <$> (endOfLine *> pair (Just "version"))
-    expect "version" ifoVersion ["2.4.2", "3.0.0"]
+      (_, ifoVersion) <- (id *** BSC8.unpack) <$> (endOfLine *> pair (Just "version"))
+      expect "version" ifoVersion ["2.4.2", "3.0.0"]
 
-    ifoData <- Map.fromList <$> (endOfLine *> (many (pair Nothing) <* endOfLine))
-    let get = flip Map.lookup ifoData
-    let require field = ( $ (get field)) $ maybe
-          (fail $ "required field " ++ BSC8.unpack field ++ " not found") (return)
+      ifoData <- Map.fromList <$> (endOfLine *> (many (pair Nothing) <* endOfLine))
+      let get = flip Map.lookup ifoData
+      let require field = ( $ (get field)) $ maybe
+            (fail $ "required field " ++ BSC8.unpack field ++ " not found") (return)
 
-    ifoBookName    <- decodeUtf8 <$> require "bookname"
-    ifoWordCount   <- read . BSC8.unpack <$> require "wordcount"
-    ifoIdxFileSize <- read . BSC8.unpack <$> require "idxfilesize"
+      ifoBookName    <- decodeUtf8 <$> require "bookname"
+      ifoWordCount   <- read . BSC8.unpack <$> require "wordcount"
+      ifoIdxFileSize <- read . BSC8.unpack <$> require "idxfilesize"
 
-    let ifoIdxOffsetBits = read . BSC8.unpack <$> get "idxoffsetbits"
-    justExpect "idxoffsetbits" ifoIdxOffsetBits [32, 64]
+      let ifoIdxOffsetBits = read . BSC8.unpack <$> get "idxoffsetbits"
+      justExpect "idxoffsetbits" ifoIdxOffsetBits [32, 64]
 
-    let ifoSynWordCount     = read . BSC8.unpack <$> get "synwordcount"
-    let ifoAuthor           = decodeUtf8 <$> get "author"
-    let ifoEmail            = decodeUtf8 <$> get "email"
-    let ifoWebsite          = decodeUtf8 <$> get "website"
-    let ifoDescription      = decodeUtf8 <$> get "description"
+      let ifoSynWordCount     = read . BSC8.unpack <$> get "synwordcount"
+      let ifoAuthor           = decodeUtf8 <$> get "author"
+      let ifoEmail            = decodeUtf8 <$> get "email"
+      let ifoWebsite          = decodeUtf8 <$> get "website"
+      let ifoDescription      = decodeUtf8 <$> get "description"
 
-    let ifoDate = get "date" >>= parseTimeM False defaultTimeLocale ifoDateFormat . BSC8.unpack
+      let ifoDate = get "date" >>= parseTimeM False defaultTimeLocale ifoDateFormat . BSC8.unpack
 
-    let ifoSameTypeSequence = BSC8.unpack <$> get "sametypesequence"
+      let ifoSameTypeSequence = BSC8.unpack <$> get "sametypesequence"
 
-    let ifoDictType = BSC8.unpack <$> get "dicttype"
-    justExpect "dicttype" ifoDictType ["wordnet"]
+      let ifoDictType = BSC8.unpack <$> get "dicttype"
+      justExpect "dicttype" ifoDictType ["wordnet"]
 
-    return IfoFile {..}
+      return IfoFile {..}
 
 
-  magicData :: Parser ByteString
-  magicData = BS.fromStrict <$> takeWhile (not . isEndOfLine)
+    magicData :: Parser ByteString
+    magicData = BS.fromStrict <$> takeWhile (not . isEndOfLine)
 
-  pair :: Maybe ByteString -> Parser (ByteString, ByteString)
-  pair = pair' . maybe
-    (takeWhile $ inClass "A-Za-z0-9-_")
-    (string . BS.toStrict) where
+    pair :: Maybe ByteString -> Parser (ByteString, ByteString)
+    pair = pair' . maybe
+      (takeWhile $ inClass "A-Za-z0-9-_")
+      (string . BS.toStrict) where
 
-    pair' key = do
-      k <- BS.fromStrict <$> (skipSpace *> key)
-      _ <- skipSpace *> char '='
-      v <- BS.fromStrict <$> (skipSpace *> takeWhile (not . isEndOfLine))
-      return (k, v)
+      pair' key = do
+        k <- BS.fromStrict <$> (skipSpace *> key)
+        _ <- skipSpace *> char '='
+        v <- BS.fromStrict <$> (skipSpace *> takeWhile (not . isEndOfLine))
+        return (k, v)
 
 -- | Get 32-bit or 64-bit integer depending on description in the .ifo file.
 indexNumberParser :: IfoFile -> Get Int
@@ -223,7 +231,7 @@ type IfoFilePath = FilePath
 
 -- | Read .idx (.idx.gz) file.
 readIndexFile :: (MonadThrow m, MonadIO m) => IfoFilePath -> Get Int -> m Index
-readIndexFile fn num = checkIndexFile fn >>= getIndexContents >>= mkIndex where
+readIndexFile fn num = checkIndexFile fn >>= getIndexContents >>= (mkIndex num) where
 
   checkIndexFile :: (MonadThrow m, MonadIO m) => IfoFilePath -> m (Either FilePath FilePath)
   checkIndexFile ifoPath = (liftIO $ checkGZFiles ifoPath ["idx"] ["idx.gz"]) >>= \case
@@ -236,20 +244,32 @@ readIndexFile fn num = checkIndexFile fn >>= getIndexContents >>= mkIndex where
     postprocess = either (const id) (const $ fmap GZip.decompress) path
     fn = either id id path
 
-  mkIndex :: (MonadThrow m, MonadIO m) => (FilePath, ByteString) -> m Index
-  mkIndex (fn, contents) = either
-    (\(_, _, err) -> throwM $ WrongIndexFormat fn err)
-    (\(_, _, res) -> return . Map.fromList $ res)
-    (runGetOrFail getIndexEntries contents)
+readIndexBS
+  :: (MonadThrow m, MonadIO m)
+  => ByteString -- ^ Index contents
+  -> Get Int
+  -> m Index
+readIndexBS bs num = mkIndex num ("ByteString",GZip.decompress bs)
 
-  getIndexEntries :: Get [IndexEntry]
-  getIndexEntries = isEmpty >>= \case
-    True  -> return []
-    False -> liftA2 (:) getIndexEntry getIndexEntries
 
-  getIndexEntry :: Get IndexEntry
-  getIndexEntry = (,) <$> (decodeUtf8 <$> getLazyByteStringNul)
-                      <*> ((,) <$> num <*> num)
+mkIndex
+  :: (MonadThrow m, MonadIO m)
+  => Get Int
+  -> (FilePath, ByteString)
+  -> m Index
+mkIndex num (fn, contents) = either
+  (\(_, _, err) -> throwM $ WrongIndexFormat fn err)
+  (\(_, _, res) -> return . Map.fromList $ res)
+  (runGetOrFail (getIndexEntries num) contents)
+
+getIndexEntries :: Get Int -> Get [IndexEntry]
+getIndexEntries num = isEmpty >>= \case
+  True  -> return []
+  False -> liftA2 (:) (getIndexEntry num) (getIndexEntries num)
+
+getIndexEntry :: Get Int -> Get IndexEntry
+getIndexEntry num = (,) <$> (decodeUtf8 <$> getLazyByteStringNul)
+                    <*> ((,) <$> num <*> num)
 
 -- | Returns path of decompressed dictionary.
 checkDataFile :: (MonadThrow m, MonadIO m) => IfoFilePath -> m FilePath
