@@ -11,9 +11,7 @@ module NLP.Dictionary (
   ) where
 
 import Data.Text.Lazy (Text)
-import Data.Trie
 
 -- | Core type class that provides interface to dictionaries.
 class Dictionary a where
   getEntries :: Text -> a -> IO [Text]
-  getTrie    :: a -> Trie Text
